@@ -1,5 +1,5 @@
-local SOURCE = "https://api.github.com/repos/R15ofc/v10-ravager-rotor-control-os/contents"
-local CACHE_BUST = "v11"
+local SOURCE = "https://raw.githubusercontent.com/R15ofc/v10-ravager-rotor-control-os/5b1131beedd0b97f7c95c96d81084cc4bec46678"
+local CACHE_BUST = "pinned-5b1131be"
 
 local FILES = {
   { source = "v10/config.lua", target = "/v10/config.lua", overwrite = "old_config" },
@@ -54,15 +54,14 @@ local function should_write(file)
   end
   if file.overwrite == "old_config" then
     local existing = read_file(file.target) or ""
-    return not existing:find("config_version%s*=%s*11")
+    return not existing:find("config_version%s*=%s*12")
   end
   return false
 end
 
 local function fetch(path)
-  local url = SOURCE .. "/" .. path .. "?ref=main&" .. CACHE_BUST
+  local url = SOURCE .. "/" .. path .. "?" .. CACHE_BUST
   local handle, err = http.get(url, {
-    ["Accept"] = "application/vnd.github.raw",
     ["User-Agent"] = "ComputerCraft",
   })
   if not handle then
