@@ -1,4 +1,5 @@
 local SOURCE = "https://raw.githubusercontent.com/R15ofc/v10-ravager-rotor-control-os/main"
+local CACHE_BUST = "v8"
 
 local FILES = {
   { source = "v10/config.lua", target = "/v10/config.lua", overwrite = "old_config" },
@@ -59,7 +60,7 @@ local function should_write(file)
 end
 
 local function fetch(path)
-  local url = SOURCE .. "/" .. path
+  local url = SOURCE .. "/" .. path .. "?" .. CACHE_BUST
   local handle, err = http.get(url, { ["Accept"] = "text/plain" })
   if not handle then
     error("download failed: " .. url .. " (" .. tostring(err) .. ")")
