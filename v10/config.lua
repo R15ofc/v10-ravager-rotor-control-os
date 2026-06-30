@@ -1,5 +1,5 @@
 return {
-  config_version = 4,
+  config_version = 5,
 
   port_type = "tm_rsPort",
   keyboard_type = "tm_keyboard",
@@ -11,16 +11,14 @@ return {
   },
 
   controls = {
-    collective = 15,
-    pitch = 15,
-    roll = 15,
+    collective = 12,
+    pitch = 6,
+    roll = 6,
   },
 
-  collective_map = {
-    front = { up = "positive", down = "negative" },
-    rear = { up = "positive", down = "negative" },
-    left = { up = "positive", down = "negative" },
-    right = { up = "positive", down = "negative" },
+  cyclic = {
+    rotation = "clockwise",
+    phase_lag_quarters = 1,
   },
 
   startup = {
@@ -34,32 +32,32 @@ return {
     front = {
       positive = { port = "flap_positive", side = "north" },
       negative = { port = "flap_negative", side = "north" },
-      pitch = 1,
-      roll = 0,
+      raise = "positive",
+      lower = "negative",
       trim = 0,
       invert = false,
     },
     rear = {
       positive = { port = "flap_positive", side = "south" },
       negative = { port = "flap_negative", side = "south" },
-      pitch = -1,
-      roll = 0,
+      raise = "negative",
+      lower = "positive",
       trim = 0,
       invert = false,
     },
     left = {
       positive = { port = "flap_positive", side = "west" },
       negative = { port = "flap_negative", side = "west" },
-      pitch = 0,
-      roll = -1,
+      raise = "positive",
+      lower = "negative",
       trim = 0,
       invert = false,
     },
     right = {
       positive = { port = "flap_positive", side = "east" },
       negative = { port = "flap_negative", side = "east" },
-      pitch = 0,
-      roll = 1,
+      raise = "positive",
+      lower = "negative",
       trim = 0,
       invert = false,
     },

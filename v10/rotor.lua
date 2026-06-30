@@ -58,8 +58,8 @@ local function load_config()
   if type(config) ~= "table" then
     error("bad config: expected table")
   end
-  if config.config_version ~= 4 then
-    error("bad config: install v4 config or delete " .. CONFIG_PATH .. " and run installer again")
+  if config.config_version ~= 5 then
+    error("bad config: install v5 config or delete " .. CONFIG_PATH .. " and run installer again")
   end
   return config
 end
@@ -397,10 +397,35 @@ local function panic_state(state)
   state.lift_clutch = false
 end
 
-local function flap_target(config, state, flap)
+local function cyclic_coefficients(config)
+  local cyclic = config.cyclic or {}
+  local rotation = cyclic.rotation or "clockwise"
+  local phase = cyclic.phase_lag_quarters or 1
+  if phase == 0 then
+    return {
+      pitch = { front = -1, right = 0, rear = 1, left = 0 },
+      roll = { front = 0, right = -1, rear = 0, left = 1 },
+    }
+  end
+
+  if rotation == "counter_clockwise" or rotation == "ccw" then
+    return {
+      pitch = { front = 0, right = -1, rear = 0, left = 1 },
+      roll = { front = 1, right = 0, rear = -1, left = 0 },
+    }
+  end
+
+  return {
+    pitch = { front = 0, right = 1, rear = 0, left = -1 },
+    roll = { front = -1, right = 0, rear = 1, left = 0 },
+  }
+end
+
+local function flap_target(coefficients, state, name, flap)
   local value =
-    (state.pitch * (flap.pitch or 0)) +
-    (state.roll * (flap.roll or 0)) +
+    state.collective +
+    (state.pitch * (coefficients.pitch[name] or 0)) +
+    (state.roll * (coefficients.roll[name] or 0)) +
     (flap.trim or 0)
 
   if flap.invert then
@@ -409,50 +434,48 @@ local function flap_target(config, state, flap)
   return clamp(round(value), -15, 15)
 end
 
-local function apply_flap(io, config, state, name, flap, values)
-  local target = flap_target(config, state, flap)
-  local positive = target > 0 and target or 0
-  local negative = target < 0 and -target or 0
+local function channel_name(flap, target)
+  if target >= 0 then
+    return flap.raise or "positive"
+  end
+  return flap.lower or "negative"
+end
+
+local function opposite_channel(channel)
+  if channel == "positive" then
+    return "negative"
+  end
+  return "positive"
+end
+
+local function apply_flap(io, coefficients, state, name, flap, values)
+  local target = flap_target(coefficients, state, name, flap)
+  local active = channel_name(flap, target)
+  local inactive = opposite_channel(active)
+  local strength = math.abs(target)
+
+  if not flap[active] then
+    error("bad flap channel for " .. name .. ": " .. tostring(active))
+  end
+  if not flap[inactive] then
+    error("bad flap inactive channel for " .. name .. ": " .. tostring(inactive))
+  end
+
+  local positive = 0
+  local negative = 0
+  if active == "positive" then
+    positive = strength
+  else
+    negative = strength
+  end
+
+  io:write(flap[inactive], 0, name .. (inactive == "positive" and "+" or "-"))
 
   values.flaps[name] = {
     target = target,
     positive = io:write(flap.positive, positive, name .. "+") or 0,
     negative = io:write(flap.negative, negative, name .. "-") or 0,
   }
-end
-
-local function collective_channel(config, name, direction)
-  local map = config.collective_map and config.collective_map[name]
-  if map and map[direction] then
-    return map[direction]
-  end
-  if direction == "up" then
-    return "positive"
-  end
-  return "negative"
-end
-
-local function apply_collective(io, config, state, values)
-  if state.collective == 0 then
-    return
-  end
-
-  local direction = state.collective > 0 and "up" or "down"
-  local strength = math.abs(state.collective)
-
-  for _, name in ipairs(FLAP_ORDER) do
-    local flap = config.flaps[name]
-    local channel = collective_channel(config, name, direction)
-    local spec = flap[channel]
-    if not spec then
-      error("bad collective_map for " .. name .. ": " .. tostring(channel))
-    end
-
-    local value_key = channel == "positive" and "positive" or "negative"
-    local label = name .. (value_key == "positive" and "+" or "-")
-    local next_value = math.max(values.flaps[name][value_key] or 0, strength)
-    values.flaps[name][value_key] = io:write(spec, next_value, label) or 0
-  end
 end
 
 local function apply_clutch(io, config, state, values)
@@ -484,16 +507,16 @@ local function apply_outputs(io, config, state)
     flaps = {},
     tail = {},
   }
+  local coefficients = cyclic_coefficients(config)
 
   for _, name in ipairs(FLAP_ORDER) do
     local flap = config.flaps and config.flaps[name]
     if not flap then
       error("missing flap config: " .. name)
     end
-    apply_flap(io, config, state, name, flap, values)
+    apply_flap(io, coefficients, state, name, flap, values)
   end
 
-  apply_collective(io, config, state, values)
   apply_clutch(io, config, state, values)
   apply_tail(io, config, state, values)
   return values
@@ -527,7 +550,7 @@ local function draw(config, state, values, keyboard_status, status)
 
   for _, name in ipairs(FLAP_ORDER) do
     local flap = values.flaps[name] or { target = 0, positive = 0, negative = 0 }
-    print(string.format("%-5s cyc:%+3d  +%2d -%2d", name, flap.target, flap.positive, flap.negative))
+    print(string.format("%-5s cmd:%+3d  +%2d -%2d", name, flap.target, flap.positive, flap.negative))
   end
 
   print("")
