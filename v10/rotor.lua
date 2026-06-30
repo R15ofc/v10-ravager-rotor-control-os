@@ -1,6 +1,14 @@
 local CONFIG_PATH = "/v10/config.lua"
+local MIN_CONFIG_VERSION = 6
+local CONFIG_VERSION = 13
 
 local FLAP_ORDER = { "front", "right", "rear", "left" }
+local BLADE_PHASE_DEGREES = {
+  front = 0,
+  right = 90,
+  rear = 180,
+  left = 270,
+}
 local TAIL_MODES = {
   normal = true,
   reverse = true,
@@ -14,6 +22,10 @@ local GLFW = {
   two = 50,
   three = 51,
   four = 52,
+  five = 53,
+  six = 54,
+  seven = 55,
+  eight = 56,
   left = 263,
   right = 262,
   down = 264,
@@ -24,6 +36,7 @@ local GLFW = {
   d = 68,
   e = 69,
   f = 70,
+  g = 71,
   i = 73,
   j = 74,
   k = 75,
@@ -34,6 +47,7 @@ local GLFW = {
   q = 81,
   r = 82,
   s = 83,
+  t = 84,
   w = 87,
   x = 88,
 }
@@ -56,6 +70,15 @@ local function round(value)
   return math.ceil(value - 0.5)
 end
 
+local function normalize_degrees(value)
+  value = tonumber(value) or 0
+  value = value % 360
+  if value < 0 then
+    value = value + 360
+  end
+  return value
+end
+
 local function load_config()
   if not fs.exists(CONFIG_PATH) then
     error("missing " .. CONFIG_PATH)
@@ -68,8 +91,9 @@ local function load_config()
   if type(config) ~= "table" then
     error("bad config: expected table")
   end
-  if config.config_version ~= 6 and config.config_version ~= 7 and config.config_version ~= 8 and config.config_version ~= 9 and config.config_version ~= 10 and config.config_version ~= 11 and config.config_version ~= 12 then
-    error("bad config: install v12 config or delete " .. CONFIG_PATH .. " and run installer again")
+  local config_version = tonumber(config.config_version)
+  if not config_version or config_version < MIN_CONFIG_VERSION or config_version > CONFIG_VERSION or config_version ~= math.floor(config_version) then
+    error("bad config: install v" .. tostring(CONFIG_VERSION) .. " config or delete " .. CONFIG_PATH .. " and run installer again")
   end
   config.controls = config.controls or {}
   if config.config_version == 6 then
@@ -83,6 +107,13 @@ local function load_config()
   config.ramp.pitch = config.ramp.pitch or 1
   config.ramp.roll = config.ramp.roll or 1
   config.ramp.release = config.ramp.release or 2
+  config.cyclic = config.cyclic or {}
+  config.cyclic.mode = config.cyclic.mode or "static"
+  config.cyclic.rpm = config.cyclic.rpm or 60
+  config.cyclic.direction = config.cyclic.direction or 1
+  config.cyclic.phase_degrees = config.cyclic.phase_degrees or 0
+  config.cyclic.rpm_step = config.cyclic.rpm_step or 5
+  config.cyclic.phase_step_degrees = config.cyclic.phase_step_degrees or 15
   config.refresh = config.refresh or 0.05
   return config
 end
@@ -335,13 +366,19 @@ local function build_keymap()
     add_action(cc, keys.two, "tail_reverse")
     add_action(cc, keys.three, "tail_stop")
     add_action(cc, keys.four, "tail_double")
+    add_action(cc, keys.five, "cyclic_phase_down")
+    add_action(cc, keys.six, "cyclic_phase_up")
+    add_action(cc, keys.seven, "cyclic_rpm_down")
+    add_action(cc, keys.eight, "cyclic_rpm_up")
     add_action(cc, keys.c, "toggle_clutch")
+    add_action(cc, keys.g, "cyclic_mode")
     add_action(cc, keys.space, "neutral_cyclic")
     add_action(cc, keys.n, "neutral_all")
     add_action(cc, keys.x, "zero_flaps")
     add_action(cc, keys.b, "panic")
     add_action(cc, keys.m, "cal_toggle")
     add_action(cc, keys.p, "cal_save")
+    add_action(cc, keys.t, "cyclic_direction")
   end
 
   local glfw = {}
@@ -365,13 +402,19 @@ local function build_keymap()
   add_action(glfw, GLFW.two, "tail_reverse")
   add_action(glfw, GLFW.three, "tail_stop")
   add_action(glfw, GLFW.four, "tail_double")
+  add_action(glfw, GLFW.five, "cyclic_phase_down")
+  add_action(glfw, GLFW.six, "cyclic_phase_up")
+  add_action(glfw, GLFW.seven, "cyclic_rpm_down")
+  add_action(glfw, GLFW.eight, "cyclic_rpm_up")
   add_action(glfw, GLFW.c, "toggle_clutch")
+  add_action(glfw, GLFW.g, "cyclic_mode")
   add_action(glfw, GLFW.space, "neutral_cyclic")
   add_action(glfw, GLFW.n, "neutral_all")
   add_action(glfw, GLFW.x, "zero_flaps")
   add_action(glfw, GLFW.b, "panic")
   add_action(glfw, GLFW.m, "cal_toggle")
   add_action(glfw, GLFW.p, "cal_save")
+  add_action(glfw, GLFW.t, "cyclic_direction")
 
   return cc, glfw
 end
@@ -489,6 +532,67 @@ local function limit_state(config, state)
   end
 end
 
+local function ensure_cyclic_config(config)
+  config.cyclic = config.cyclic or {}
+  config.cyclic.mode = config.cyclic.mode or "static"
+  config.cyclic.rpm = config.cyclic.rpm or 60
+  config.cyclic.direction = config.cyclic.direction or 1
+  config.cyclic.phase_degrees = config.cyclic.phase_degrees or 0
+  config.cyclic.rpm_step = config.cyclic.rpm_step or 5
+  config.cyclic.phase_step_degrees = config.cyclic.phase_step_degrees or 15
+  return config.cyclic
+end
+
+local function cyclic_status(config)
+  local cyclic = ensure_cyclic_config(config)
+  local direction = (tonumber(cyclic.direction) or 1) < 0 and "-" or "+"
+  return string.format(
+    "cyclic:%s rpm:%d phase:%d dir:%s",
+    cyclic.mode or "static",
+    round(cyclic.rpm or 0),
+    round(normalize_degrees(cyclic.phase_degrees or 0)),
+    direction
+  )
+end
+
+local function save_cyclic_status(config, state)
+  local saved = save_config(config)
+  state.status = cyclic_status(config) .. (saved and " saved" or " save failed")
+end
+
+local function reset_cyclic_epoch(state)
+  state.cyclic_epoch = os.clock and os.clock() or 0
+end
+
+local function adjust_cyclic_phase(config, state, direction)
+  local cyclic = ensure_cyclic_config(config)
+  local step = tonumber(cyclic.phase_step_degrees) or 15
+  cyclic.phase_degrees = normalize_degrees((cyclic.phase_degrees or 0) + (direction * step))
+  save_cyclic_status(config, state)
+end
+
+local function adjust_cyclic_rpm(config, state, direction)
+  local cyclic = ensure_cyclic_config(config)
+  local step = tonumber(cyclic.rpm_step) or 5
+  cyclic.rpm = clamp(round((cyclic.rpm or 0) + (direction * step)), 0, 600)
+  reset_cyclic_epoch(state)
+  save_cyclic_status(config, state)
+end
+
+local function toggle_cyclic_mode(config, state)
+  local cyclic = ensure_cyclic_config(config)
+  cyclic.mode = cyclic.mode == "timed" and "static" or "timed"
+  reset_cyclic_epoch(state)
+  save_cyclic_status(config, state)
+end
+
+local function flip_cyclic_direction(config, state)
+  local cyclic = ensure_cyclic_config(config)
+  cyclic.direction = ((tonumber(cyclic.direction) or 1) < 0) and 1 or -1
+  reset_cyclic_epoch(state)
+  save_cyclic_status(config, state)
+end
+
 local function startup_state(config)
   local startup = config.startup or {}
   local state = {
@@ -508,6 +612,7 @@ local function startup_state(config)
     cal_lower = false,
     status = nil,
     events = {},
+    cyclic_epoch = os.clock and os.clock() or 0,
   }
   update_held_axes(config, state)
   limit_state(config, state)
@@ -572,8 +677,47 @@ local function mix_for(config, name)
   }
 end
 
+local function cyclic_is_timed(config)
+  local cyclic = config.cyclic or {}
+  return cyclic.mode == "timed"
+end
+
+local function timed_cyclic_mix(config, state, name)
+  local cyclic = config.cyclic or {}
+  local rpm = tonumber(cyclic.rpm) or 60
+  local direction = tonumber(cyclic.direction) or 1
+  if direction < 0 then
+    direction = -1
+  else
+    direction = 1
+  end
+
+  local now = os.clock and os.clock() or 0
+  local epoch = state.cyclic_epoch or now
+  local elapsed = math.max(0, now - epoch)
+  local blade_phase = BLADE_PHASE_DEGREES[name] or 0
+  local phase =
+    blade_phase +
+    (direction * elapsed * rpm * 6) +
+    (tonumber(cyclic.phase_degrees) or 0)
+  local radians = normalize_degrees(phase) * math.pi / 180
+
+  return {
+    collective = mix_for(config, name).collective,
+    pitch = math.sin(radians),
+    roll = -math.cos(radians),
+  }
+end
+
+local function active_mix_for(config, state, name)
+  if cyclic_is_timed(config) and not state.calibration then
+    return timed_cyclic_mix(config, state, name)
+  end
+  return mix_for(config, name)
+end
+
 local function flap_target(config, state, name, flap)
-  local mix = mix_for(config, name)
+  local mix = active_mix_for(config, state, name)
   local value =
     (state.collective * mix.collective) +
     (state.pitch * mix.pitch) +
@@ -751,8 +895,11 @@ local function draw(config, state, values, keyboard_status, status)
   else
     print("R/F lift  W/S or I/K pitch  A/D or J/L roll")
     print("1 normal  2 reverse  3 stop    4 x2")
+    print("5/6 phase  7/8 rpm  G cyclic mode  T dir")
     print("C clutch  SPACE level  X zero  N reset  B panic  M cal")
   end
+  print("")
+  print(cyclic_status(config))
   print("")
   print(string.format(
     "collective:%2d/%2d pitch:%+3d/%+3d roll:%+3d/%+3d clutch:%s tail:%s",
@@ -921,6 +1068,18 @@ local function handle_action(config, state, action, released, repeated)
     update_held_axes(config, state)
   elseif action == "toggle_clutch" then
     state.lift_clutch = not state.lift_clutch
+  elseif action == "cyclic_phase_down" then
+    adjust_cyclic_phase(config, state, -1)
+  elseif action == "cyclic_phase_up" then
+    adjust_cyclic_phase(config, state, 1)
+  elseif action == "cyclic_rpm_down" then
+    adjust_cyclic_rpm(config, state, -1)
+  elseif action == "cyclic_rpm_up" then
+    adjust_cyclic_rpm(config, state, 1)
+  elseif action == "cyclic_mode" then
+    toggle_cyclic_mode(config, state)
+  elseif action == "cyclic_direction" then
+    flip_cyclic_direction(config, state)
   elseif action == "neutral_cyclic" then
     neutral_cyclic(state)
     update_held_axes(config, state)

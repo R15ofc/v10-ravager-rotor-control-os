@@ -1,5 +1,5 @@
 return {
-  config_version = 12,
+  config_version = 13,
 
   port_type = "tm_rsPort",
   keyboard_type = "tm_keyboard",
@@ -21,6 +21,15 @@ return {
     pitch = 1,
     roll = 1,
     release = 2,
+  },
+
+  cyclic = {
+    mode = "timed",
+    rpm = 60,
+    direction = 1,
+    phase_degrees = 0,
+    rpm_step = 5,
+    phase_step_degrees = 15,
   },
 
   mix = {
