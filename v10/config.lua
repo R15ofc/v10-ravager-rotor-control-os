@@ -1,5 +1,5 @@
 return {
-  config_version = 2,
+  config_version = 3,
 
   port_type = "tm_rsPort",
   keyboard_type = "tm_keyboard",
@@ -10,24 +10,18 @@ return {
     aux = "back",
   },
 
-  limits = {
-    flap = 15,
-    collective_min = 0,
-    collective_max = 15,
+  controls = {
+    collective = 15,
     pitch = 15,
     roll = 15,
   },
 
   startup = {
-    collective = 0,
-    pitch = 0,
-    roll = 0,
     lift_clutch = true,
     tail_mode = "normal",
   },
 
-  key_step = 1,
-  refresh = 0.05,
+  refresh = 0.20,
 
   flaps = {
     front = {

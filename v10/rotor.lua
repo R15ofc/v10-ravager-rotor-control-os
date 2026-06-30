@@ -58,8 +58,8 @@ local function load_config()
   if type(config) ~= "table" then
     error("bad config: expected table")
   end
-  if config.config_version ~= 2 then
-    error("bad config: install v2 config or delete " .. CONFIG_PATH .. " and run installer again")
+  if config.config_version ~= 3 then
+    error("bad config: install v3 config or delete " .. CONFIG_PATH .. " and run installer again")
   end
   return config
 end
@@ -197,8 +197,11 @@ local function make_io(config)
     end
 
     value = clamp(round(value), spec.min or 0, spec.max or 15)
-    port.setAnalogOutput(spec.side, value)
-    self.writes[label or spec.side] = value
+    label = label or spec.side
+    if self.writes[label] ~= value then
+      port.setAnalogOutput(spec.side, value)
+      self.writes[label] = value
+    end
     return value
   end
 
@@ -285,32 +288,54 @@ local function build_keymap()
   return cc, glfw
 end
 
-local function action_from_event(event, a, b)
-  local cc_map, glfw_map = build_keymap()
+local function action_from_event(event, a, b, c, cc_map, glfw_map)
   if event == "key" then
-    return cc_map[a] or glfw_map[a], false
+    return cc_map[a] or glfw_map[a], false, b == true
   end
   if event == "key_up" then
-    return cc_map[a] or glfw_map[a], true
+    return cc_map[a] or glfw_map[a], true, false
   end
   if event == "tm_keyboard_key" then
-    return glfw_map[b], false
+    return glfw_map[b], false, c == true
   end
   if event == "tm_keyboard_key_up" then
-    return glfw_map[b], true
+    return glfw_map[b], true, false
   end
-  return nil, false
+  return nil, false, false
 end
 
 local function active_tail_mode(state)
   return state.yaw_hold or state.tail_mode or "normal"
 end
 
+local function held_axis(hold, positive, negative, amount)
+  local pos = hold[positive] == true
+  local neg = hold[negative] == true
+  if pos and not neg then
+    return amount
+  end
+  if neg and not pos then
+    return -amount
+  end
+  return 0
+end
+
+local function update_held_axes(config, state)
+  local controls = config.controls or {}
+  state.collective = held_axis(state.hold, "collective_up", "collective_down", controls.collective or 15)
+  state.pitch = held_axis(state.hold, "pitch_forward", "pitch_back", controls.pitch or 15)
+  state.roll = held_axis(state.hold, "roll_right", "roll_left", controls.roll or 15)
+
+  if state.hold.yaw_reverse_hold and not state.hold.yaw_double_hold then
+    state.yaw_hold = "reverse"
+  elseif state.hold.yaw_double_hold and not state.hold.yaw_reverse_hold then
+    state.yaw_hold = "double"
+  else
+    state.yaw_hold = nil
+  end
+end
+
 local function limit_state(config, state)
-  local limits = config.limits or {}
-  state.collective = clamp(state.collective, limits.collective_min or 0, limits.collective_max or 15)
-  state.pitch = clamp(state.pitch, -(limits.pitch or 15), limits.pitch or 15)
-  state.roll = clamp(state.roll, -(limits.roll or 15), limits.roll or 15)
   if not TAIL_MODES[state.tail_mode] then
     state.tail_mode = "normal"
   end
@@ -319,32 +344,41 @@ end
 local function startup_state(config)
   local startup = config.startup or {}
   local state = {
-    collective = startup.collective or 0,
-    pitch = startup.pitch or 0,
-    roll = startup.roll or 0,
+    collective = 0,
+    pitch = 0,
+    roll = 0,
+    hold = {},
     lift_clutch = startup.lift_clutch ~= false,
     tail_mode = startup.tail_mode or "normal",
     yaw_hold = nil,
   }
+  update_held_axes(config, state)
   limit_state(config, state)
   return state
 end
 
 local function neutral_cyclic(state)
+  state.hold.pitch_forward = nil
+  state.hold.pitch_back = nil
+  state.hold.roll_left = nil
+  state.hold.roll_right = nil
+  state.hold.yaw_reverse_hold = nil
+  state.hold.yaw_double_hold = nil
   state.pitch = 0
   state.roll = 0
   state.yaw_hold = nil
 end
 
 local function zero_flaps(state)
+  state.hold.collective_up = nil
+  state.hold.collective_down = nil
+  neutral_cyclic(state)
   state.collective = 0
-  state.pitch = 0
-  state.roll = 0
-  state.yaw_hold = nil
 end
 
 local function neutral_all(config, state)
   local startup = startup_state(config)
+  state.hold = {}
   state.collective = startup.collective
   state.pitch = startup.pitch
   state.roll = startup.roll
@@ -354,6 +388,7 @@ local function neutral_all(config, state)
 end
 
 local function panic_state(state)
+  state.hold = {}
   state.collective = 0
   state.pitch = 0
   state.roll = 0
@@ -372,7 +407,7 @@ local function flap_target(config, state, flap)
   if flap.invert then
     value = -value
   end
-  return clamp(round(value), -(config.limits and config.limits.flap or 15), config.limits and config.limits.flap or 15)
+  return clamp(round(value), -15, 15)
 end
 
 local function apply_flap(io, config, state, name, flap, values)
@@ -476,81 +511,94 @@ local function draw(config, state, values, keyboard_status, status)
   end
 end
 
-local function handle_action(config, state, action, released)
-  local step = config.key_step or 1
-  if released then
-    if action == "yaw_reverse_hold" and state.yaw_hold == "reverse" then
-      state.yaw_hold = nil
-    elseif action == "yaw_double_hold" and state.yaw_hold == "double" then
-      state.yaw_hold = nil
+local function is_hold_action(action)
+  return action == "collective_up"
+    or action == "collective_down"
+    or action == "pitch_forward"
+    or action == "pitch_back"
+    or action == "roll_left"
+    or action == "roll_right"
+    or action == "yaw_reverse_hold"
+    or action == "yaw_double_hold"
+end
+
+local function handle_action(config, state, action, released, repeated)
+  if is_hold_action(action) then
+    local next_value = not released
+    if state.hold[action] == next_value then
+      return false
     end
-    return
+    state.hold[action] = next_value or nil
+    update_held_axes(config, state)
+    limit_state(config, state)
+    return true
   end
 
-  if action == "collective_up" then
-    state.collective = state.collective + step
-  elseif action == "collective_down" then
-    state.collective = state.collective - step
-  elseif action == "pitch_forward" then
-    state.pitch = state.pitch + step
-  elseif action == "pitch_back" then
-    state.pitch = state.pitch - step
-  elseif action == "roll_left" then
-    state.roll = state.roll - step
-  elseif action == "roll_right" then
-    state.roll = state.roll + step
-  elseif action == "yaw_reverse_hold" then
-    state.yaw_hold = "reverse"
-  elseif action == "yaw_double_hold" then
-    state.yaw_hold = "double"
-  elseif action == "tail_normal" then
+  if released or repeated then
+    return false
+  end
+
+  if action == "tail_normal" then
     state.tail_mode = "normal"
-    state.yaw_hold = nil
+    state.hold.yaw_reverse_hold = nil
+    state.hold.yaw_double_hold = nil
+    update_held_axes(config, state)
   elseif action == "tail_reverse" then
     state.tail_mode = "reverse"
-    state.yaw_hold = nil
+    state.hold.yaw_reverse_hold = nil
+    state.hold.yaw_double_hold = nil
+    update_held_axes(config, state)
   elseif action == "tail_stop" then
     state.tail_mode = "stop"
-    state.yaw_hold = nil
+    state.hold.yaw_reverse_hold = nil
+    state.hold.yaw_double_hold = nil
+    update_held_axes(config, state)
   elseif action == "tail_double" then
     state.tail_mode = "double"
-    state.yaw_hold = nil
+    state.hold.yaw_reverse_hold = nil
+    state.hold.yaw_double_hold = nil
+    update_held_axes(config, state)
   elseif action == "toggle_clutch" then
     state.lift_clutch = not state.lift_clutch
   elseif action == "neutral_cyclic" then
     neutral_cyclic(state)
+    update_held_axes(config, state)
   elseif action == "neutral_all" then
     neutral_all(config, state)
   elseif action == "zero_flaps" then
     zero_flaps(state)
+    update_held_axes(config, state)
   elseif action == "panic" then
     panic_state(state)
   end
 
   limit_state(config, state)
+  return true
 end
 
 local function main()
   local config = load_config()
   local io = make_io(config)
   local keyboard_status = setup_keyboard(config)
+  local cc_map, glfw_map = build_keymap()
   local state = startup_state(config)
   local values = apply_outputs(io, config, state)
   draw(config, state, values, keyboard_status)
 
   local timer = os.startTimer(config.refresh or 0.05)
   while true do
-    local event, a, b = os.pullEventRaw()
+    local event, a, b, c = os.pullEventRaw()
 
     if event == "timer" and a == timer then
       values = apply_outputs(io, config, state)
       timer = os.startTimer(config.refresh or 0.05)
     elseif event == "key" or event == "key_up" or event == "tm_keyboard_key" or event == "tm_keyboard_key_up" then
-      local action, released = action_from_event(event, a, b)
+      local action, released, repeated = action_from_event(event, a, b, c, cc_map, glfw_map)
       if action then
-        handle_action(config, state, action, released)
-        values = apply_outputs(io, config, state)
-        draw(config, state, values, keyboard_status)
+        if handle_action(config, state, action, released, repeated) then
+          values = apply_outputs(io, config, state)
+          draw(config, state, values, keyboard_status)
+        end
       end
     elseif event == "terminate" or event == "tm_keyboard_terminate" then
       panic_state(state)
