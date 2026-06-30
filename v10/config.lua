@@ -1,5 +1,5 @@
 return {
-  config_version = 5,
+  config_version = 6,
 
   port_type = "tm_rsPort",
   keyboard_type = "tm_keyboard",
@@ -16,9 +16,11 @@ return {
     roll = 6,
   },
 
-  cyclic = {
-    rotation = "clockwise",
-    phase_lag_quarters = 1,
+  mix = {
+    front = { collective = 1, pitch = 0, roll = -1 },
+    right = { collective = 1, pitch = 1, roll = 0 },
+    rear = { collective = 1, pitch = 0, roll = 1 },
+    left = { collective = 1, pitch = -1, roll = 0 },
   },
 
   startup = {
