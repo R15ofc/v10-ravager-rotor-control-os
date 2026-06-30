@@ -1,5 +1,5 @@
 return {
-  config_version = 13,
+  config_version = 14,
 
   port_type = "tm_rsPort",
   keyboard_type = "tm_keyboard",
@@ -24,12 +24,21 @@ return {
   },
 
   cyclic = {
-    mode = "timed",
+    mode = "sensor",
     rpm = 60,
     direction = 1,
     phase_degrees = 0,
     rpm_step = 5,
     phase_step_degrees = 15,
+  },
+
+  phase_sensor = {
+    enabled = true,
+    side = "front",
+    inverted = false,
+    pulses_per_revolution = 4,
+    debounce = 0.02,
+    timeout_revolutions = 2,
   },
 
   mix = {

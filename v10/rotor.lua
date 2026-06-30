@@ -1,6 +1,6 @@
 local CONFIG_PATH = "/v10/config.lua"
 local MIN_CONFIG_VERSION = 6
-local CONFIG_VERSION = 13
+local CONFIG_VERSION = 14
 
 local FLAP_ORDER = { "front", "right", "rear", "left" }
 local BLADE_PHASE_DEGREES = {
@@ -114,6 +114,20 @@ local function load_config()
   config.cyclic.phase_degrees = config.cyclic.phase_degrees or 0
   config.cyclic.rpm_step = config.cyclic.rpm_step or 5
   config.cyclic.phase_step_degrees = config.cyclic.phase_step_degrees or 15
+  local had_phase_sensor = config.phase_sensor ~= nil
+  config.phase_sensor = config.phase_sensor or {}
+  if config.phase_sensor.enabled == nil then
+    config.phase_sensor.enabled = true
+  end
+  config.phase_sensor.side = config.phase_sensor.side or "front"
+  config.phase_sensor.inverted = config.phase_sensor.inverted or false
+  config.phase_sensor.pulses_per_revolution = config.phase_sensor.pulses_per_revolution or 4
+  config.phase_sensor.debounce = config.phase_sensor.debounce or 0.02
+  config.phase_sensor.timeout_revolutions = config.phase_sensor.timeout_revolutions or 2
+  if not had_phase_sensor and config.config_version < 14 then
+    config.cyclic.mode = "sensor"
+  end
+  config.config_version = CONFIG_VERSION
   config.refresh = config.refresh or 0.05
   return config
 end
@@ -543,21 +557,61 @@ local function ensure_cyclic_config(config)
   return config.cyclic
 end
 
-local function cyclic_status(config)
+local function ensure_phase_sensor_config(config)
+  config.phase_sensor = config.phase_sensor or {}
+  if config.phase_sensor.enabled == nil then
+    config.phase_sensor.enabled = true
+  end
+  config.phase_sensor.side = config.phase_sensor.side or "front"
+  config.phase_sensor.inverted = config.phase_sensor.inverted or false
+  config.phase_sensor.pulses_per_revolution = config.phase_sensor.pulses_per_revolution or 4
+  config.phase_sensor.debounce = config.phase_sensor.debounce or 0.02
+  config.phase_sensor.timeout_revolutions = config.phase_sensor.timeout_revolutions or 2
+  return config.phase_sensor
+end
+
+local function phase_sensor_locked(config, state)
+  local sensor = ensure_phase_sensor_config(config)
+  local phase_sensor = state and state.phase_sensor
+  if not sensor.enabled or not phase_sensor or not phase_sensor.last_pulse_time or not phase_sensor.pulse_interval then
+    return false
+  end
+  local full_period = phase_sensor.pulse_interval * math.max(1, tonumber(sensor.pulses_per_revolution) or 4)
+  local timeout = full_period * math.max(1, tonumber(sensor.timeout_revolutions) or 2)
+  local now = os.clock and os.clock() or 0
+  return (now - phase_sensor.last_pulse_time) <= timeout
+end
+
+local function phase_sensor_status(config, state)
+  local sensor = ensure_phase_sensor_config(config)
+  if not sensor.enabled then
+    return "sns:off"
+  end
+  local phase_sensor = state and state.phase_sensor
+  if not phase_sensor or not phase_sensor.last_pulse_time then
+    return "sns:seek " .. tostring(sensor.side or "front")
+  end
+  local lock = phase_sensor_locked(config, state) and "lock" or "lost"
+  local rpm = phase_sensor.rotor_rpm and round(phase_sensor.rotor_rpm) or 0
+  return string.format("sns:%s r%d p%d", lock, rpm, phase_sensor.pulses or 0)
+end
+
+local function cyclic_status(config, state)
   local cyclic = ensure_cyclic_config(config)
   local direction = (tonumber(cyclic.direction) or 1) < 0 and "-" or "+"
   return string.format(
-    "cyclic:%s rpm:%d phase:%d dir:%s",
+    "cyc:%s r%d ph%d %s  %s",
     cyclic.mode or "static",
     round(cyclic.rpm or 0),
     round(normalize_degrees(cyclic.phase_degrees or 0)),
-    direction
+    direction,
+    phase_sensor_status(config, state)
   )
 end
 
 local function save_cyclic_status(config, state)
   local saved = save_config(config)
-  state.status = cyclic_status(config) .. (saved and " saved" or " save failed")
+  state.status = cyclic_status(config, state) .. (saved and " saved" or " save failed")
 end
 
 local function reset_cyclic_epoch(state)
@@ -581,7 +635,13 @@ end
 
 local function toggle_cyclic_mode(config, state)
   local cyclic = ensure_cyclic_config(config)
-  cyclic.mode = cyclic.mode == "timed" and "static" or "timed"
+  if cyclic.mode == "sensor" then
+    cyclic.mode = "static"
+  elseif cyclic.mode == "static" then
+    cyclic.mode = "timed"
+  else
+    cyclic.mode = "sensor"
+  end
   reset_cyclic_epoch(state)
   save_cyclic_status(config, state)
 end
@@ -591,6 +651,83 @@ local function flip_cyclic_direction(config, state)
   cyclic.direction = ((tonumber(cyclic.direction) or 1) < 0) and 1 or -1
   reset_cyclic_epoch(state)
   save_cyclic_status(config, state)
+end
+
+local function read_phase_sensor_input(config)
+  local sensor = ensure_phase_sensor_config(config)
+  if not sensor.enabled or not redstone or not redstone.getInput then
+    return false
+  end
+  local ok, powered = pcall(redstone.getInput, sensor.side or "front")
+  if not ok then
+    return false
+  end
+  if sensor.inverted then
+    powered = not powered
+  end
+  return powered and true or false
+end
+
+local function init_phase_sensor(config, state)
+  state.phase_sensor = {
+    powered = read_phase_sensor_input(config),
+    pulses = 0,
+    last_pulse_time = nil,
+    pulse_interval = nil,
+    rotor_rpm = nil,
+    anchor_time = os.clock and os.clock() or 0,
+    anchor_phase = 0,
+    last_draw = 0,
+  }
+end
+
+local function update_phase_sensor(config, state)
+  local sensor = ensure_phase_sensor_config(config)
+  if not sensor.enabled then
+    return false
+  end
+  if not state.phase_sensor then
+    init_phase_sensor(config, state)
+  end
+
+  local phase_sensor = state.phase_sensor
+  local powered = read_phase_sensor_input(config)
+  local changed = powered ~= phase_sensor.powered
+  phase_sensor.powered = powered
+  if not powered or not changed then
+    return false
+  end
+
+  local now = os.clock and os.clock() or 0
+  local debounce = tonumber(sensor.debounce) or 0.02
+  if phase_sensor.last_pulse_time and (now - phase_sensor.last_pulse_time) < debounce then
+    return false
+  end
+
+  local direction = (tonumber(ensure_cyclic_config(config).direction) or 1) < 0 and -1 or 1
+  local pulses_per_revolution = math.max(1, tonumber(sensor.pulses_per_revolution) or 4)
+  local step = 360 / pulses_per_revolution
+
+  if phase_sensor.last_pulse_time then
+    local interval = now - phase_sensor.last_pulse_time
+    if interval > 0 then
+      if phase_sensor.pulse_interval then
+        phase_sensor.pulse_interval = (phase_sensor.pulse_interval * 0.7) + (interval * 0.3)
+      else
+        phase_sensor.pulse_interval = interval
+      end
+      phase_sensor.rotor_rpm = 60 / (phase_sensor.pulse_interval * pulses_per_revolution)
+      phase_sensor.anchor_phase = normalize_degrees((phase_sensor.anchor_phase or 0) + (direction * step))
+    end
+  else
+    phase_sensor.anchor_phase = 0
+  end
+
+  phase_sensor.pulses = (phase_sensor.pulses or 0) + 1
+  phase_sensor.last_pulse_time = now
+  phase_sensor.anchor_time = now
+  state.status = phase_sensor_status(config, state)
+  return true
 end
 
 local function startup_state(config)
@@ -614,6 +751,7 @@ local function startup_state(config)
     events = {},
     cyclic_epoch = os.clock and os.clock() or 0,
   }
+  init_phase_sensor(config, state)
   update_held_axes(config, state)
   limit_state(config, state)
   return state
@@ -679,7 +817,25 @@ end
 
 local function cyclic_is_timed(config)
   local cyclic = config.cyclic or {}
-  return cyclic.mode == "timed"
+  return cyclic.mode == "timed" or cyclic.mode == "sensor"
+end
+
+local function phase_from_sensor(config, state)
+  if not phase_sensor_locked(config, state) then
+    return nil
+  end
+
+  local cyclic = ensure_cyclic_config(config)
+  local phase_sensor = state.phase_sensor
+  local direction = (tonumber(cyclic.direction) or 1) < 0 and -1 or 1
+  local rpm = tonumber(phase_sensor.rotor_rpm) or tonumber(cyclic.rpm) or 60
+  if rpm <= 0 then
+    return nil
+  end
+
+  local now = os.clock and os.clock() or 0
+  local elapsed = math.max(0, now - (phase_sensor.anchor_time or now))
+  return normalize_degrees((phase_sensor.anchor_phase or 0) + (direction * elapsed * rpm * 6))
 end
 
 local function timed_cyclic_mix(config, state, name)
@@ -696,9 +852,16 @@ local function timed_cyclic_mix(config, state, name)
   local epoch = state.cyclic_epoch or now
   local elapsed = math.max(0, now - epoch)
   local blade_phase = BLADE_PHASE_DEGREES[name] or 0
+  local rotor_phase = nil
+  if cyclic.mode == "sensor" then
+    rotor_phase = phase_from_sensor(config, state)
+  end
+  if not rotor_phase then
+    rotor_phase = direction * elapsed * rpm * 6
+  end
   local phase =
     blade_phase +
-    (direction * elapsed * rpm * 6) +
+    rotor_phase +
     (tonumber(cyclic.phase_degrees) or 0)
   local radians = normalize_degrees(phase) * math.pi / 180
 
@@ -899,7 +1062,7 @@ local function draw(config, state, values, keyboard_status, status)
     print("C clutch  SPACE level  X zero  N reset  B panic  M cal")
   end
   print("")
-  print(cyclic_status(config))
+  print(cyclic_status(config, state))
   print("")
   print(string.format(
     "collective:%2d/%2d pitch:%+3d/%+3d roll:%+3d/%+3d clutch:%s tail:%s",
@@ -1132,6 +1295,16 @@ local function main()
         end
       elseif state.calibration then
         draw(config, state, values, keyboard_status)
+      end
+    elseif event == "redstone" then
+      if update_phase_sensor(config, state) then
+        values = apply_outputs(io, config, state)
+        local phase_sensor = state.phase_sensor or {}
+        local now = os.clock and os.clock() or 0
+        if now - (phase_sensor.last_draw or 0) >= 0.5 then
+          phase_sensor.last_draw = now
+          draw(config, state, values, keyboard_status)
+        end
       end
     elseif event == "terminate" or event == "tm_keyboard_terminate" then
       panic_state(state)
