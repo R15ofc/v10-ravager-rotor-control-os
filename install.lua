@@ -1,4 +1,4 @@
-local SOURCE = "https://raw.githubusercontent.com/R15ofc/v10-ravager-rotor-control-os/main"
+local SOURCE = "https://api.github.com/repos/R15ofc/v10-ravager-rotor-control-os/contents"
 local CACHE_BUST = "v9"
 
 local FILES = {
@@ -60,8 +60,11 @@ local function should_write(file)
 end
 
 local function fetch(path)
-  local url = SOURCE .. "/" .. path .. "?" .. CACHE_BUST
-  local handle, err = http.get(url, { ["Accept"] = "text/plain" })
+  local url = SOURCE .. "/" .. path .. "?ref=main&" .. CACHE_BUST
+  local handle, err = http.get(url, {
+    ["Accept"] = "application/vnd.github.raw",
+    ["User-Agent"] = "ComputerCraft",
+  })
   if not handle then
     error("download failed: " .. url .. " (" .. tostring(err) .. ")")
   end
