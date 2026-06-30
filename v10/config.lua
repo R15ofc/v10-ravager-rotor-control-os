@@ -1,5 +1,5 @@
 return {
-  config_version = 3,
+  config_version = 4,
 
   port_type = "tm_rsPort",
   keyboard_type = "tm_keyboard",
@@ -16,6 +16,13 @@ return {
     roll = 15,
   },
 
+  collective_map = {
+    front = { up = "positive", down = "negative" },
+    rear = { up = "positive", down = "negative" },
+    left = { up = "positive", down = "negative" },
+    right = { up = "positive", down = "negative" },
+  },
+
   startup = {
     lift_clutch = true,
     tail_mode = "normal",
@@ -27,7 +34,6 @@ return {
     front = {
       positive = { port = "flap_positive", side = "north" },
       negative = { port = "flap_negative", side = "north" },
-      collective = 1,
       pitch = 1,
       roll = 0,
       trim = 0,
@@ -36,7 +42,6 @@ return {
     rear = {
       positive = { port = "flap_positive", side = "south" },
       negative = { port = "flap_negative", side = "south" },
-      collective = 1,
       pitch = -1,
       roll = 0,
       trim = 0,
@@ -45,7 +50,6 @@ return {
     left = {
       positive = { port = "flap_positive", side = "west" },
       negative = { port = "flap_negative", side = "west" },
-      collective = 1,
       pitch = 0,
       roll = -1,
       trim = 0,
@@ -54,7 +58,6 @@ return {
     right = {
       positive = { port = "flap_positive", side = "east" },
       negative = { port = "flap_negative", side = "east" },
-      collective = 1,
       pitch = 0,
       roll = 1,
       trim = 0,

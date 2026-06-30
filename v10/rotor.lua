@@ -58,8 +58,8 @@ local function load_config()
   if type(config) ~= "table" then
     error("bad config: expected table")
   end
-  if config.config_version ~= 3 then
-    error("bad config: install v3 config or delete " .. CONFIG_PATH .. " and run installer again")
+  if config.config_version ~= 4 then
+    error("bad config: install v4 config or delete " .. CONFIG_PATH .. " and run installer again")
   end
   return config
 end
@@ -399,7 +399,6 @@ end
 
 local function flap_target(config, state, flap)
   local value =
-    (state.collective * (flap.collective or 0)) +
     (state.pitch * (flap.pitch or 0)) +
     (state.roll * (flap.roll or 0)) +
     (flap.trim or 0)
@@ -420,6 +419,40 @@ local function apply_flap(io, config, state, name, flap, values)
     positive = io:write(flap.positive, positive, name .. "+") or 0,
     negative = io:write(flap.negative, negative, name .. "-") or 0,
   }
+end
+
+local function collective_channel(config, name, direction)
+  local map = config.collective_map and config.collective_map[name]
+  if map and map[direction] then
+    return map[direction]
+  end
+  if direction == "up" then
+    return "positive"
+  end
+  return "negative"
+end
+
+local function apply_collective(io, config, state, values)
+  if state.collective == 0 then
+    return
+  end
+
+  local direction = state.collective > 0 and "up" or "down"
+  local strength = math.abs(state.collective)
+
+  for _, name in ipairs(FLAP_ORDER) do
+    local flap = config.flaps[name]
+    local channel = collective_channel(config, name, direction)
+    local spec = flap[channel]
+    if not spec then
+      error("bad collective_map for " .. name .. ": " .. tostring(channel))
+    end
+
+    local value_key = channel == "positive" and "positive" or "negative"
+    local label = name .. (value_key == "positive" and "+" or "-")
+    local next_value = math.max(values.flaps[name][value_key] or 0, strength)
+    values.flaps[name][value_key] = io:write(spec, next_value, label) or 0
+  end
 end
 
 local function apply_clutch(io, config, state, values)
@@ -460,6 +493,7 @@ local function apply_outputs(io, config, state)
     apply_flap(io, config, state, name, flap, values)
   end
 
+  apply_collective(io, config, state, values)
   apply_clutch(io, config, state, values)
   apply_tail(io, config, state, values)
   return values
@@ -493,7 +527,7 @@ local function draw(config, state, values, keyboard_status, status)
 
   for _, name in ipairs(FLAP_ORDER) do
     local flap = values.flaps[name] or { target = 0, positive = 0, negative = 0 }
-    print(string.format("%-5s target:%+3d  +%2d -%2d", name, flap.target, flap.positive, flap.negative))
+    print(string.format("%-5s cyc:%+3d  +%2d -%2d", name, flap.target, flap.positive, flap.negative))
   end
 
   print("")
