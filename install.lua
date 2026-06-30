@@ -1,5 +1,5 @@
-local SOURCE = "https://raw.githubusercontent.com/R15ofc/v10-ravager-rotor-control-os/5b1131beedd0b97f7c95c96d81084cc4bec46678"
-local CACHE_BUST = "pinned-5b1131be"
+local SOURCE = "https://raw.githubusercontent.com/R15ofc/v10-ravager-rotor-control-os/d4c8ee254bf7feb8059b197b5a260513ce5c0f97"
+local CACHE_BUST = "pinned-d4c8ee25"
 
 local FILES = {
   { source = "v10/config.lua", target = "/v10/config.lua", overwrite = "old_config" },
