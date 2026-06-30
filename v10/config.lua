@@ -1,5 +1,5 @@
 return {
-  config_version = 6,
+  config_version = 7,
 
   port_type = "tm_rsPort",
   keyboard_type = "tm_keyboard",
@@ -11,9 +11,16 @@ return {
   },
 
   controls = {
-    collective = 12,
-    pitch = 6,
-    roll = 6,
+    collective = 6,
+    pitch = 4,
+    roll = 4,
+  },
+
+  ramp = {
+    collective = 1,
+    pitch = 1,
+    roll = 1,
+    release = 2,
   },
 
   mix = {
@@ -28,7 +35,7 @@ return {
     tail_mode = "normal",
   },
 
-  refresh = 0.20,
+  refresh = 0.05,
 
   flaps = {
     front = {

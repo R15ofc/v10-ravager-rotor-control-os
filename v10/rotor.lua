@@ -68,9 +68,22 @@ local function load_config()
   if type(config) ~= "table" then
     error("bad config: expected table")
   end
-  if config.config_version ~= 6 then
-    error("bad config: install v6 config or delete " .. CONFIG_PATH .. " and run installer again")
+  if config.config_version ~= 6 and config.config_version ~= 7 then
+    error("bad config: install v7 config or delete " .. CONFIG_PATH .. " and run installer again")
   end
+  config.controls = config.controls or {}
+  if config.config_version == 6 then
+    config.controls.collective = math.min(config.controls.collective or 6, 6)
+    config.controls.pitch = math.min(config.controls.pitch or 4, 4)
+    config.controls.roll = math.min(config.controls.roll or 4, 4)
+    config.refresh = 0.05
+  end
+  config.ramp = config.ramp or {}
+  config.ramp.collective = config.ramp.collective or 1
+  config.ramp.pitch = config.ramp.pitch or 1
+  config.ramp.roll = config.ramp.roll or 1
+  config.ramp.release = config.ramp.release or 2
+  config.refresh = config.refresh or 0.05
   return config
 end
 
@@ -414,9 +427,9 @@ end
 
 local function update_held_axes(config, state)
   local controls = config.controls or {}
-  state.collective = held_axis(state.hold, "collective_up", "collective_down", controls.collective or 15)
-  state.pitch = held_axis(state.hold, "pitch_forward", "pitch_back", controls.pitch or 15)
-  state.roll = held_axis(state.hold, "roll_right", "roll_left", controls.roll or 15)
+  state.target_collective = held_axis(state.hold, "collective_up", "collective_down", controls.collective or 6)
+  state.target_pitch = held_axis(state.hold, "pitch_forward", "pitch_back", controls.pitch or 4)
+  state.target_roll = held_axis(state.hold, "roll_right", "roll_left", controls.roll or 4)
 
   if state.hold.yaw_reverse_hold and not state.hold.yaw_double_hold then
     state.yaw_hold = "reverse"
@@ -425,6 +438,49 @@ local function update_held_axes(config, state)
   else
     state.yaw_hold = nil
   end
+end
+
+local function approach(current, target, step)
+  if current < target then
+    return math.min(current + step, target)
+  end
+  if current > target then
+    return math.max(current - step, target)
+  end
+  return current
+end
+
+local function axis_step(config, axis, current, target)
+  local ramp = config.ramp or {}
+  if target == 0 and current ~= 0 then
+    return ramp.release or 2
+  end
+  return ramp[axis] or 1
+end
+
+local function slew_axes(config, state)
+  local changed = false
+  local next_collective = approach(
+    state.collective,
+    state.target_collective or 0,
+    axis_step(config, "collective", state.collective, state.target_collective or 0)
+  )
+  local next_pitch = approach(
+    state.pitch,
+    state.target_pitch or 0,
+    axis_step(config, "pitch", state.pitch, state.target_pitch or 0)
+  )
+  local next_roll = approach(
+    state.roll,
+    state.target_roll or 0,
+    axis_step(config, "roll", state.roll, state.target_roll or 0)
+  )
+
+  changed = next_collective ~= state.collective or next_pitch ~= state.pitch or next_roll ~= state.roll
+  state.collective = next_collective
+  state.pitch = next_pitch
+  state.roll = next_roll
+  return changed
 end
 
 local function limit_state(config, state)
@@ -439,6 +495,9 @@ local function startup_state(config)
     collective = 0,
     pitch = 0,
     roll = 0,
+    target_collective = 0,
+    target_pitch = 0,
+    target_roll = 0,
     hold = {},
     lift_clutch = startup.lift_clutch ~= false,
     tail_mode = startup.tail_mode or "normal",
@@ -462,6 +521,8 @@ local function neutral_cyclic(state)
   state.hold.roll_right = nil
   state.hold.yaw_reverse_hold = nil
   state.hold.yaw_double_hold = nil
+  state.target_pitch = 0
+  state.target_roll = 0
   state.pitch = 0
   state.roll = 0
   state.yaw_hold = nil
@@ -471,6 +532,7 @@ local function zero_flaps(state)
   state.hold.collective_up = nil
   state.hold.collective_down = nil
   neutral_cyclic(state)
+  state.target_collective = 0
   state.collective = 0
 end
 
@@ -480,6 +542,9 @@ local function neutral_all(config, state)
   state.collective = startup.collective
   state.pitch = startup.pitch
   state.roll = startup.roll
+  state.target_collective = 0
+  state.target_pitch = 0
+  state.target_roll = 0
   state.lift_clutch = startup.lift_clutch
   state.tail_mode = "normal"
   state.yaw_hold = nil
@@ -490,6 +555,9 @@ local function panic_state(state)
   state.collective = 0
   state.pitch = 0
   state.roll = 0
+  state.target_collective = 0
+  state.target_pitch = 0
+  state.target_roll = 0
   state.yaw_hold = nil
   state.tail_mode = "stop"
   state.lift_clutch = false
@@ -687,10 +755,13 @@ local function draw(config, state, values, keyboard_status, status)
   end
   print("")
   print(string.format(
-    "collective:%2d pitch:%+3d roll:%+3d clutch:%s tail:%s",
+    "collective:%2d/%2d pitch:%+3d/%+3d roll:%+3d/%+3d clutch:%s tail:%s",
     state.collective,
+    state.target_collective or 0,
     state.pitch,
+    state.target_pitch or 0,
     state.roll,
+    state.target_roll or 0,
     state.lift_clutch and "on " or "off",
     values.tail_mode or active_tail_mode(state)
   ))
@@ -880,13 +951,23 @@ local function main()
     local event, a, b, c = os.pullEventRaw()
 
     if event == "timer" and a == timer then
+      local axes_changed = false
+      if not state.calibration then
+        axes_changed = slew_axes(config, state)
+      end
       values = apply_outputs(io, config, state)
+      if axes_changed then
+        draw(config, state, values, keyboard_status)
+      end
       timer = os.startTimer(config.refresh or 0.05)
     elseif event == "key" or event == "key_up" or event == "tm_keyboard_key" or event == "tm_keyboard_key_up" then
       local action, released, repeated = action_from_event(event, a, b, c, cc_map, glfw_map)
       log_key_event(state, event, a, b, c, action)
       if action then
         if handle_action(config, state, action, released, repeated) then
+          if not state.calibration then
+            slew_axes(config, state)
+          end
           values = apply_outputs(io, config, state)
           draw(config, state, values, keyboard_status)
         end

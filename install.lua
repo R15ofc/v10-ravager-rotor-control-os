@@ -53,7 +53,10 @@ local function should_write(file)
   end
   if file.overwrite == "old_config" then
     local existing = read_file(file.target) or ""
-    return not existing:find("config_version%s*=%s*6")
+    return not (
+      existing:find("config_version%s*=%s*6") or
+      existing:find("config_version%s*=%s*7")
+    )
   end
   return false
 end
