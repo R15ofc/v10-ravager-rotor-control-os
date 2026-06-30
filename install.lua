@@ -1,5 +1,5 @@
-local SOURCE = "https://raw.githubusercontent.com/R15ofc/v10-ravager-rotor-control-os/d4c8ee254bf7feb8059b197b5a260513ce5c0f97"
-local CACHE_BUST = "pinned-d4c8ee25"
+local SOURCE = "https://raw.githubusercontent.com/R15ofc/v10-ravager-rotor-control-os/fdd5af289affe509af40094be39920f9760fb7ca"
+local CACHE_BUST = "pinned-fdd5af23"
 
 local FILES = {
   { source = "v10/config.lua", target = "/v10/config.lua", overwrite = "old_config" },
@@ -54,7 +54,7 @@ local function should_write(file)
   end
   if file.overwrite == "old_config" then
     local existing = read_file(file.target) or ""
-    return not existing:find("config_version%s*=%s*12")
+    return not existing:find("config_version%s*=%s*13")
   end
   return false
 end
