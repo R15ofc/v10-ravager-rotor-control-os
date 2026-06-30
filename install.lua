@@ -1,7 +1,7 @@
 local SOURCE = "https://raw.githubusercontent.com/R15ofc/v10-ravager-rotor-control-os/main"
 
 local FILES = {
-  { source = "v10/config.lua", target = "/v10/config.lua", overwrite = false },
+  { source = "v10/config.lua", target = "/v10/config.lua", overwrite = "old_config" },
   { source = "v10/rotor.lua", target = "/v10/rotor.lua", overwrite = true },
   { source = "startup.lua", target = "/startup.lua", overwrite = true },
 }
@@ -31,6 +31,33 @@ local function backup(path)
   return candidate
 end
 
+local function read_file(path)
+  if not fs.exists(path) then
+    return nil
+  end
+  local handle = fs.open(path, "r")
+  if not handle then
+    return nil
+  end
+  local body = handle.readAll()
+  handle.close()
+  return body
+end
+
+local function should_write(file)
+  if file.overwrite == true then
+    return true
+  end
+  if not fs.exists(file.target) then
+    return true
+  end
+  if file.overwrite == "old_config" then
+    local existing = read_file(file.target) or ""
+    return not existing:find("config_version%s*=%s*2")
+  end
+  return false
+end
+
 local function fetch(path)
   local url = SOURCE .. "/" .. path
   local handle, err = http.get(url, { ["Accept"] = "text/plain" })
@@ -53,10 +80,10 @@ end
 print("Installing V-10 rotor control")
 
 for _, file in ipairs(FILES) do
-  if file.overwrite or not fs.exists(file.target) then
+  if should_write(file) then
     local body = fetch(file.source)
     ensure_dir(file.target)
-    if file.overwrite then
+    if fs.exists(file.target) then
       local saved = backup(file.target)
       if saved then
         print("backup " .. file.target .. " -> " .. saved)
