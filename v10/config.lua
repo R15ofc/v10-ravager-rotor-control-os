@@ -1,5 +1,5 @@
 return {
-  config_version = 10,
+  config_version = 11,
 
   port_type = "tm_rsPort",
   keyboard_type = "tm_keyboard",
@@ -27,7 +27,7 @@ return {
     front = { collective = 1, pitch = 0, roll = -1 },
     right = { collective = 1, pitch = 1, roll = 0 },
     rear = { collective = 1, pitch = 0, roll = 1 },
-    left = { collective = 1, pitch = -1, roll = 0 },
+    left = { collective = 1, pitch = 1, roll = 0 },
   },
 
   startup = {

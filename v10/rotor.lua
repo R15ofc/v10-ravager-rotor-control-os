@@ -68,8 +68,8 @@ local function load_config()
   if type(config) ~= "table" then
     error("bad config: expected table")
   end
-  if config.config_version ~= 6 and config.config_version ~= 7 and config.config_version ~= 8 and config.config_version ~= 9 and config.config_version ~= 10 then
-    error("bad config: install v10 config or delete " .. CONFIG_PATH .. " and run installer again")
+  if config.config_version ~= 6 and config.config_version ~= 7 and config.config_version ~= 8 and config.config_version ~= 9 and config.config_version ~= 10 and config.config_version ~= 11 then
+    error("bad config: install v11 config or delete " .. CONFIG_PATH .. " and run installer again")
   end
   config.controls = config.controls or {}
   if config.config_version == 6 then
