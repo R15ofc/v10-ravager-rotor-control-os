@@ -444,7 +444,7 @@ local function draw(config, state, values, keyboard_status, status)
   print("")
   print("R/F lift  W/S pitch  A/D roll  Q/E yaw hold")
   print("1 normal  2 reverse  3 stop    4 x2")
-  print("C clutch  SPACE level  X zero  B panic")
+  print("C clutch  SPACE level  X zero  N reset  B panic")
   print("")
   print(string.format(
     "collective:%2d pitch:%+3d roll:%+3d clutch:%s tail:%s",
