@@ -1,5 +1,5 @@
 return {
-  config_version = 9,
+  config_version = 10,
 
   port_type = "tm_rsPort",
   keyboard_type = "tm_keyboard",
@@ -49,8 +49,8 @@ return {
     rear = {
       positive = { port = "flap_positive", side = "south" },
       negative = { port = "flap_negative", side = "south" },
-      raise = "negative",
-      lower = "positive",
+      raise = "positive",
+      lower = "negative",
       trim = 0,
       invert = false,
     },
